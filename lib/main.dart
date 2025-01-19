@@ -34,6 +34,7 @@ class HomePageState extends State<HomePage> {
   final TextEditingController controller = TextEditingController();
 
   Future<void> _saveApiToken() async {
+    if (controller.text.isEmpty) return;
     try {
       await Keystore.savePair(key: 'github_api_token', value: controller.text);
       setState(() => token = controller.text);
@@ -99,7 +100,7 @@ class HomePageState extends State<HomePage> {
                   decoration: InputDecoration(
                     icon: Icon(Icons.person),
                     labelText: 'Github Access Token',
-                    hintText: 'Enter your github access token',
+                    hintText: 'Paste github access token here',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -148,6 +149,27 @@ class HomePageState extends State<HomePage> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  onPressed: () => setState(() => token = null),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                    iconColor: Colors.white,
+                    iconSize: 35,
+                  ),
+                  icon: Icon(Icons.change_circle),
+                  label: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                    child: Text(
+                      'Change Token',
+                      style: TextStyle(
+                        backgroundColor: Colors.red,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
