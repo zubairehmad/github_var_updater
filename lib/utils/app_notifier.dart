@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:github_var_updater/main.dart';
 
 
-/// NotificationManager handles user notifications inside the app UI.
+/// AppNotifier helps to show notifications withing app UI.
 /// It supports both, dialog notifications and overlay notifications.
 /// 
 /// Dialog Notifications can be used to notify user about any important event or thing.
