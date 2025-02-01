@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:github_var_updater/utils/keystore.dart';
+import 'package:github_var_updater/utils/app_notifier.dart';
 
 void main() {
   runApp(const App());
@@ -17,7 +18,7 @@ class App extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
         useMaterial3: true,
       ),
-      home: HomePage(),
+      home: HomePage(key: AppNotifier.homePageKey),
     );
   }
 }
@@ -34,23 +35,18 @@ class HomePageState extends State<HomePage> {
   final TextEditingController controller = TextEditingController();
 
   Future<void> _saveApiToken() async {
-    if (controller.text.isEmpty) return;
-    try {
-      await Keystore.savePair(key: 'github_api_token', value: controller.text);
-      setState(() => token = controller.text);
-    } catch (e) {
-      print('An error occured: ${e.toString()}');
+    if (controller.text.isEmpty) {
+      AppNotifier.notifyUserAboutError(errorMessage: "Github Api Token (AKA access token) can't be empty");
+      return;
     }
+    await Keystore.savePair(key: 'github_api_token', value: controller.text);
+    setState(() => token = controller.text);
   }
 
   Future<void> _fetchApiToken() async {
-  try {
-      String? githubToken = await Keystore.getValueForKey(key: 'github_api_token');
-      if (githubToken != null) {
-        setState(() => token = githubToken);
-      }
-    } catch (e) {
-      print('An error occured: ${e.toString()}');
+    String? githubToken = await Keystore.getValueForKey(key: 'github_api_token');
+    if (githubToken != null) {
+      setState(() => token = githubToken);
     }
   }
 
