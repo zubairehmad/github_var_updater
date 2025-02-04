@@ -146,15 +146,20 @@ class _RepositorySectionState extends State<RepositorySection> {
               ),
             ] else ...[
               for (int i = 0; i < repositories!.length; i++) ...[
-                ListTile(
-                  leading: const Icon(Icons.folder_special, color: Colors.blueAccent),
-                  title: Text(
-                    repositories![i].fullName,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
+                InkWell(
+                  onTap: () {},
+                  borderRadius: BorderRadius.circular(12),
+                  child: ListTile(
+                    leading: const Icon(Icons.folder_special, color: Colors.blueAccent),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    title: Text(
+                      repositories![i].fullName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
+                    subtitle: Text('${repositories![i].isPrivate? "Private" : "Public"} Repository'),
                   ),
-                  subtitle: Text('${repositories![i].isPrivate? "Private" : "Public"} Repository'),
                 ),
                 if (i != repositories!.length-1) ...[
                   const Divider(thickness: 1)
