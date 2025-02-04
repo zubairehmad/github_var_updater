@@ -22,7 +22,6 @@ class AppNotifier {
       required BuildContext context,
       required String title,
       required String msg,
-      TextStyle? msgStyle,
       Icon? icon,
       void Function()? okButtonBehaviour}) {
     return AlertDialog(
@@ -59,7 +58,7 @@ class AppNotifier {
           padding: const EdgeInsets.all(8.0),
           child: Text(
             msg,
-            style: msgStyle ?? const TextStyle(
+            style: const TextStyle(
               fontSize: 16,
               color: Colors.black87,
               height: 1.5,
@@ -88,11 +87,8 @@ class AppNotifier {
     );
   }
 
-  static Future<void> showErrorDialog({
-    required String errorMessage,
-    TextStyle? msgStyle,
-    void Function()? okButtonBehaviour
-  }) async {
+  static Future<void> showErrorDialog({required String errorMessage,
+      void Function()? okButtonBehaviour}) async {
     BuildContext? context = homePageKey.currentContext;
     if (context != null) {
       await showDialog(
@@ -104,18 +100,14 @@ class AppNotifier {
               context: context,
               title: 'Error',
               msg: errorMessage,
-              msgStyle: msgStyle,
               icon: Icon(Icons.error_outline, color: Colors.red, size: 24));
         },
       );
     }
   }
 
-  static Future<void> showInfoDialog({
-    required String info,
-    TextStyle? msgStyle,
-    void Function()? okButtonBehaviour
-  }) async {
+  static Future<void> showInfoDialog({required String info,
+      void Function()? okButtonBehaviour}) async {
     BuildContext? context = homePageKey.currentContext;
     if (context != null) {
       await showDialog(
@@ -126,7 +118,6 @@ class AppNotifier {
                 context: context,
                 title: 'Info',
                 msg: info,
-                msgStyle: msgStyle,
                 icon: Icon(Icons.info_outline, color: Colors.blue, size: 24));
           });
     }
@@ -264,46 +255,44 @@ class NotificationWidget extends StatelessWidget {
     required this.message,
     required this.themeColor,
     required this.icon,
-    this.messageStyle = const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87),
+    this.messageStyle = const TextStyle(color: Colors.black, fontSize: 18),
     this.onDismissed
   });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      child: Dismissible(
-        key: UniqueKey(),
-        direction: DismissDirection.horizontal,
-        onDismissed: (dir) {
-          // Call on dismissed callback
-          if (onDismissed != null) {
-            onDismissed!(dir);
-          }
+    return Dismissible(
+      key: UniqueKey(),
+      direction: DismissDirection.horizontal,
+      onDismissed: (dir) {
+        // Call on dismissed callback
+        if (onDismissed != null) {
+          onDismissed!(dir);
+        }
 
-          // Remove notification from notifications list
-          AppNotifier._removeNotification(this);
-        },
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: themeColor.shade50, // Light Shade of themeColor
-            border: Border.all(color: themeColor, width: 2),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              icon,
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  message,
-                  style: messageStyle
-                ),
-              ),
-            ],
-          ),
+        // Remove notification from notifications list
+        AppNotifier._removeNotification(this);
+      },
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: themeColor.shade50, // Light Shade of themeColor
+          border: Border.all(color: themeColor, width: 2),
+          borderRadius: BorderRadius.circular(12),
         ),
-      )
+        child: Row(
+          children: [
+            icon,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: messageStyle
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

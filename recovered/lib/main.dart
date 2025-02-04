@@ -17,7 +17,7 @@ class MyApp extends StatelessWidget {
       title: 'Github Var Updater',
       theme: ThemeData.light(),
       darkTheme: ThemeData.dark(),
-      themeMode: ThemeMode.dark,  // Follow system settings
+      themeMode: ThemeMode.system,  // Follow system settings
       home: MainScreen(key: AppNotifier.homePageKey),
     );
   }
