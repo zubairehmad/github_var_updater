@@ -3,7 +3,7 @@ import 'package:github_var_updater/api_service/github_api.dart';
 import 'package:github_var_updater/utils/app_notifier.dart';
 import 'package:github_var_updater/screens/main_screen.dart';
 
-void main() {
+void main() async {
   GithubApi.loadPreviousUser();
   runApp(const MyApp());
 }
