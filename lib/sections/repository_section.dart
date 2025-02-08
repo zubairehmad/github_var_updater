@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:github_var_updater/api_service/github_api.dart';
+import 'package:github_var_updater/utils/app_notifier.dart';
+import 'package:github_var_updater/utils/google_utils.dart';
 import 'package:github_var_updater/widgets/styled_text_button.dart';
 
 class RepositorySection extends StatefulWidget {
@@ -23,7 +25,7 @@ class _RepositorySectionState extends State<RepositorySection> {
       requiredPage: currentPage,
       perPage: repoPerPage,
     );
-    // Will stop displaying circual progress indicator
+    // Will stop displaying circular progress indicator
     setState(() => repoBeingFetched = false);
   }
 
@@ -85,6 +87,19 @@ class _RepositorySectionState extends State<RepositorySection> {
       final response = await GithubApi.deleteSecret(secretName: secretName, secretRepo: repo);
       if (response == 204) {
         onDelete();
+      }
+    }
+
+    Future<void> udpateSecretValue({required String secretName}) async {
+      String? accessToken = await GoogleUtils.getAccessTokenForGoogleAccount();
+      if (accessToken != null) {
+        await GithubApi.updateSecret(
+          secretName: secretName,
+          secretRepo: repo,
+          newValue: accessToken
+        );
+      } else {
+        AppNotifier.notifyUserAboutError(errorMessage: 'Unable to get access token for updating secret!');
       }
     }
 
@@ -159,8 +174,10 @@ class _RepositorySectionState extends State<RepositorySection> {
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       IconButton(
-                                        onPressed: () {},
-                                        icon: const Icon(Icons.edit),
+                                        onPressed: () {
+                                          udpateSecretValue(secretName: secret.name);
+                                        },
+                                        icon: const Icon(Icons.update),
                                       ),
                                       const SizedBox(width: 8),
                                       IconButton(
