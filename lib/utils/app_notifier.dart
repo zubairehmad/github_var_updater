@@ -271,6 +271,7 @@ class NotificationWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
+      color: Colors.transparent,
       child: Dismissible(
         key: UniqueKey(),
         direction: DismissDirection.horizontal,
