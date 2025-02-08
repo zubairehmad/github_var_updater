@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:github_var_updater/api_service/github_api.dart';
 import 'package:github_var_updater/utils/app_notifier.dart';
@@ -93,10 +95,11 @@ class _RepositorySectionState extends State<RepositorySection> {
     Future<void> udpateSecretValue({required String secretName}) async {
       String? accessToken = await GoogleUtils.getAccessTokenForGoogleAccount();
       if (accessToken != null) {
+        // The access token will be passed as encoded string in base64
         await GithubApi.updateSecret(
           secretName: secretName,
           secretRepo: repo,
-          newValue: accessToken
+          newValue: base64.encode(utf8.encode(accessToken))
         );
       } else {
         AppNotifier.notifyUserAboutError(errorMessage: 'Unable to get access token for updating secret!');
