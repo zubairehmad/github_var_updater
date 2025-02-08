@@ -177,9 +177,7 @@ class _RepositorySectionState extends State<RepositorySection> {
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       IconButton(
-                                        onPressed: () {
-                                          udpateSecretValue(secretName: secret.name);
-                                        },
+                                        onPressed: () => udpateSecretValue(secretName: secret.name),
                                         icon: const Icon(Icons.update),
                                       ),
                                       const SizedBox(width: 8),
