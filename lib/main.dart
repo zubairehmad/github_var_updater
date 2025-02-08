@@ -4,7 +4,7 @@ import 'package:github_var_updater/utils/app_notifier.dart';
 import 'package:github_var_updater/screens/main_screen.dart';
 
 void main() async {
-  GithubApi.loadPreviousUser();
+  await GithubApi.loadPreviousUser();
   runApp(const MyApp());
 }
 
