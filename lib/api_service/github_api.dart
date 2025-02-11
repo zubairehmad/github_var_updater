@@ -33,13 +33,13 @@ class GithubRepository {
   final String name;
   final String fullName;
   final bool isPrivate;
-  final RepositoryRelationType relationType;
+  // final RepositoryRelationType relationType;
 
   const GithubRepository({
     required this.name,
     required this.fullName,
     required this.isPrivate,
-    required this.relationType,
+    // required this.relationType,
   });
 }
 
@@ -248,13 +248,26 @@ class GithubApi {
     return response.statusCode;
   }
 
-  /// Returns all repositories of current user.
+  static int _currentRepoPage = 1;
+  static List<GithubRepository> _alreadyCachedRepositories = [];
+
+  /// Returns only repositories for which the user is admin. The returned repositories
+  /// are based upon [desiredAmountOfRepo]. It can return less than that if all repositories
+  /// are returned, or if last page is encountered. [startFromFirstPage] can be set to true
+  /// to start fetching from first page.
   /// 
-  /// Returns [null] if any error occurs.
-  static Future<List<GithubRepository>?> getUserRepos({
-    int requiredPage = 1,
-    int perPage = 30
-  }) async {
+  /// It handles pagination internally.
+  /// 
+  /// Returns null if any error occurs during fetching repositories
+  static Future<List<GithubRepository>?> getUserRepos({int desiredAmountOfRepo = 20, bool startFromFirstPage = false}) async {
+    const reposPerPage = 50;
+    List<GithubRepository> filteredRepos = [];
+
+    if (startFromFirstPage) {
+      _currentRepoPage = 1;
+      _alreadyCachedRepositories = [];
+    }
+    
     if (_user == null) {
       AppNotifier.showErrorDialog(
         errorMessage: "Cannot get repositories for current user! Please provide required information on github account section!"
@@ -262,55 +275,91 @@ class GithubApi {
       return null;
     }
 
+    if (_alreadyCachedRepositories.isNotEmpty) {
+      if (_alreadyCachedRepositories.length <= desiredAmountOfRepo) {
+        filteredRepos.addAll(_alreadyCachedRepositories);
+        _alreadyCachedRepositories = [];
+      } else {
+        filteredRepos.addAll(_alreadyCachedRepositories.sublist(0, desiredAmountOfRepo));
+        _alreadyCachedRepositories = _alreadyCachedRepositories.sublist(desiredAmountOfRepo);
+        return filteredRepos;
+      }
+    }
+
     try {
-      final uri = Uri.parse('$_baseUrl/user/repos?per_page=$perPage&page=$requiredPage');
-      final response = await http.get(
-        uri,
-        headers: {
-          'Authorization' : 'Bearer ${_user?.accessToken}',
-          'Accept' : 'application/vnd.github+json'
-        }
-      );
+      late http.Response response;
+      bool shouldStop = false;
 
-      if (response.statusCode == 200) {
-        List<dynamic> repos = jsonDecode(response.body);
+      do {
+        // final uri = Uri.parse('$_baseUrl/user/repos?per_page=$perPage&page=$requiredPage');
+        final uri = Uri.parse('$_baseUrl/user/repos?per_page=$reposPerPage&page=$_currentRepoPage');
+        response = await http.get(
+          uri,
+          headers: {
+            'Authorization' : 'Bearer ${_user?.accessToken}',
+            'Accept' : 'application/vnd.github+json'
+          }
+        );
+        _currentRepoPage++;
 
-        List<GithubRepository> repositories = repos.map((repoAsJson) {
-          RepositoryRelationType relationType;
-          String ownerLogin = repoAsJson['owner']['login'];
-          String ownerType = repoAsJson['owner']['type'];
+        if (response.statusCode == 200) {
+          List<dynamic> unfilteredRepos = jsonDecode(response.body);
+          bool desiredAmountReached = false;
 
-          if (ownerLogin == _user!.username) {
-            relationType = RepositoryRelationType.userOwned;
-          } else if (ownerType == 'Organization') {
-            relationType = RepositoryRelationType.organizationOwned;
-          } else {
-            relationType = RepositoryRelationType.collaboratorOnly;
+          for (int i = 0; i < unfilteredRepos.length; i++) {
+            Map<String, dynamic> repoAsJson = unfilteredRepos[i];
+
+            if (filteredRepos.length == desiredAmountOfRepo) {
+              desiredAmountReached = true;
+            }
+
+            if (repoAsJson['permissions']['admin'] == true) {
+
+              GithubRepository repository = GithubRepository(
+                name: repoAsJson['name'],
+                fullName: repoAsJson['full_name'],
+                isPrivate: repoAsJson['private']
+              );
+
+              if (desiredAmountReached) {
+                // Desired amount is reached, but some repos are left in current page
+                // that are eligibile but couldn't be fetched. To add them in subsequenet
+                // calls, they are cached now.
+                _alreadyCachedRepositories.add(repository);
+              } else {
+                filteredRepos.add(repository);
+              }
+            }
           }
 
-          return GithubRepository(
-            name: repoAsJson['name'],
-            fullName: repoAsJson['full_name'],
-            isPrivate: repoAsJson['private'],
-            relationType: relationType,
+          // If less repositories were fetched but reposPerPage was more, then it
+          // is considered last page, hence the fetching should stop by now even if
+          // fetching is not completed
+          if (unfilteredRepos.length < reposPerPage) {
+            shouldStop = true;
+          }
+        } else if (response.statusCode == 401) {
+          AppNotifier.notifyUserAboutError(errorMessage: 'Please provide valid credentials! Current ones are invalid!');
+          shouldStop = true;
+        } else if (response.statusCode == 403) {
+          AppNotifier.notifyUserAboutError(
+            errorMessage: "Either github api rate limit exceeded or your token doesn't have required permissions"
           );
-        }).toList();
+          shouldStop = true;
+          
+        } else {
+          AppNotifier.showErrorDialog(
+            errorMessage: 'Unknown error occured while trying to get repositories.\nResponse Status Code: ${response.statusCode}'
+          );
+          shouldStop = true;
+        }        
+      } while(filteredRepos.length != desiredAmountOfRepo && !shouldStop);
 
-        repositories.sort((a, b) {
-          return a.relationType.index.compareTo(b.relationType.index);
-        });
-    
-        return repositories;
-      } else if (response.statusCode == 401) {
-        AppNotifier.notifyUserAboutError(errorMessage: 'Please provide valid credentials! Current ones are invalid!');
-      } else if (response.statusCode == 403) {
-        AppNotifier.notifyUserAboutError(
-          errorMessage: "Either github api rate limit exceeded or your token doesn't have required permissions"
-        );
+      if (response.statusCode == 200) {
+        return filteredRepos;
       } else {
-        AppNotifier.showErrorDialog(
-          errorMessage: 'Unknown error occured while trying to get repositories.\nResponse Status Code: ${response.statusCode}'
-        );
+        // As error occured, it means that current page must be the last page.
+        _currentRepoPage--;
       }
     } on SocketException {
       AppNotifier.notifyUserAboutInfo(info: 'Please check your internet!');
