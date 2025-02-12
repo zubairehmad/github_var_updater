@@ -84,13 +84,6 @@ class _RepositorySectionState extends State<RepositorySection> {
       }
     }
 
-    Future<void> deleteSecret({required void Function() onDelete, required String secretName}) async {
-      final response = await GithubApi.deleteSecret(secretName: secretName, secretRepo: repo);
-      if (response == 204) {
-        onDelete();
-      }
-    }
-
     Future<void> udpateSecretValue({required String secretName}) async {
 
       OAuth2Token? token = await GoogleUtils.getOuth2Token();
@@ -203,23 +196,9 @@ class _RepositorySectionState extends State<RepositorySection> {
                                     secret.name,
                                     style: const TextStyle(fontWeight: FontWeight.bold),
                                   ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        onPressed: () => udpateSecretValue(secretName: secret.name),
-                                        icon: const Icon(Icons.update),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      IconButton(
-                                        onPressed: () {
-                                          deleteSecret(onDelete: () {
-                                            setState(() => secrets.removeAt(index));
-                                          }, secretName: secret.name);
-                                        },
-                                        icon: const Icon(Icons.delete, color: Colors.red),
-                                      )
-                                    ],
+                                  trailing: IconButton(
+                                    onPressed: () => udpateSecretValue(secretName: secret.name),
+                                    icon: const Icon(Icons.update),
                                   ),
                                 );
                               },
