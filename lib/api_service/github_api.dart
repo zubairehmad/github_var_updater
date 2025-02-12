@@ -33,13 +33,11 @@ class GithubRepository {
   final String name;
   final String fullName;
   final bool isPrivate;
-  // final RepositoryRelationType relationType;
 
   const GithubRepository({
     required this.name,
     required this.fullName,
     required this.isPrivate,
-    // required this.relationType,
   });
 }
 
@@ -76,14 +74,29 @@ class GithubApi {
     }
   }
 
-  /// Returns list of all the secrets of given repository of current user.
+  static int _currentSecretPage = 1;
+  static List<RepositorySecret> _alreadyCachedSecrets = [];
+
+  /// Returns list of [desiredAmount] (atmost) of secrets for given [repoName].
+  /// Starts fetching from first page if [startFromFirstPage] is set to true.
   /// 
-  /// Returns [null] if any problem occurs
+  /// It handles pagination internally.
+  /// 
+  /// Returns null if any problem occurs, and empty list when all the secrets
+  /// are returned
   static Future<List<RepositorySecret>?> getRepoSecrets({
     required String repoName,
-    int requiredPage = 1,
-    int perPage = 10
+    int desiredAmount = 10,
+    bool startFromFirstPage = false,
   }) async {
+    const perPage = 30;
+    List<RepositorySecret> secrets = [];
+
+    if (startFromFirstPage) {
+      _currentSecretPage = 1;
+      _alreadyCachedSecrets = [];
+    }
+
     if (_user == null) {
       AppNotifier.showErrorDialog(
         errorMessage: 'User is not authenticated! Cannot get secrets!'
@@ -91,32 +104,61 @@ class GithubApi {
       return null;
     }
 
+    if (_alreadyCachedSecrets.isNotEmpty) {
+      int itemsToAdd = _alreadyCachedSecrets.length < desiredAmount
+        ? _alreadyCachedSecrets.length
+        : desiredAmount;
+
+      secrets.addAll(_alreadyCachedSecrets.sublist(0, itemsToAdd));
+      _alreadyCachedSecrets = _alreadyCachedSecrets.sublist(itemsToAdd);
+    }
+
     try {
-      final uri = Uri.parse(
-        "$_baseUrl/repos/${_user!.username}/$repoName/actions/secrets?per_page=$perPage&page=$requiredPage"
-      );
-      final response = await http.get(
-        uri,
-        headers: {
-          'Authorization' : 'Bearer ${_user!.accessToken}',
-          'Accept' : 'application/vnd.github+json',
+      while (secrets.length < desiredAmount) {
+        final uri = Uri.parse(
+          "$_baseUrl/repos/${_user!.username}/$repoName/actions/secrets?per_page=$perPage&page=$_currentSecretPage"
+        );
+        final response = await http.get(
+          uri,
+          headers: {
+            'Authorization' : 'Bearer ${_user!.accessToken}',
+            'Accept' : 'application/vnd.github+json',
+          }
+        );
+
+        if (response.statusCode == 200) {
+          _currentSecretPage++;
+
+          List<dynamic> secretsAsJson = jsonDecode(response.body)['secrets'];
+
+          for (int i = 0; i < secretsAsJson.length; i++) {
+            Map<String, dynamic> secretAsJson = secretsAsJson[i];
+            RepositorySecret repositorySecret = RepositorySecret(
+              name: secretAsJson['name'],
+              createdAt: _toPrettyDate(secretAsJson['created_at']),
+              updatedAt: _toPrettyDate(secretAsJson['updated_at']),
+            );
+
+            if (secrets.length < desiredAmount) {
+              secrets.add(repositorySecret);
+            } else {
+              _alreadyCachedSecrets.add(repositorySecret);
+            }
+          }
+
+          if (secretsAsJson.length < perPage) break;
+        } else {
+          if (response.statusCode == 404) {
+            AppNotifier.notifyUserAboutError(errorMessage: "You don't seem to have permission to view secrets of required repository!");
+          } else {
+            AppNotifier.showErrorDialog(
+              errorMessage: 'Error occured while fetching secrets: ${response.statusCode} - ${response.reasonPhrase}'
+            );
+          }
+          return null;
         }
-      );
-
-      if (response.statusCode == 200) {
-        List<dynamic> secrets = jsonDecode(response.body)['secrets'];
-        List<RepositorySecret> repoSecrets = secrets.map((secretAsJson) {
-          return RepositorySecret(
-            name: secretAsJson['name'],
-            createdAt: _toPrettyDate(secretAsJson['created_at']),
-            updatedAt: _toPrettyDate(secretAsJson['updated_at']),
-          );
-        }).toList();
-
-        return repoSecrets;
-      } else if (response.statusCode == 404) {
-        AppNotifier.notifyUserAboutError(errorMessage: "You don't seem to have permission to view secrets of required repository!");
       }
+      return secrets;
     } on SocketException {
       AppNotifier.notifyUserAboutInfo(info: 'Please check your internet connection!');
     } catch (e) {
@@ -258,7 +300,8 @@ class GithubApi {
   /// 
   /// It handles pagination internally.
   /// 
-  /// Returns null if any error occurs during fetching repositories
+  /// Returns null if any error occurs during fetching repositories, and empty list
+  /// when all repositories are returned.
   static Future<List<GithubRepository>?> getUserRepos({int desiredAmountOfRepo = 20, bool startFromFirstPage = false}) async {
     const reposPerPage = 50;
     List<GithubRepository> filteredRepos = [];
@@ -276,22 +319,21 @@ class GithubApi {
     }
 
     if (_alreadyCachedRepositories.isNotEmpty) {
-      if (_alreadyCachedRepositories.length <= desiredAmountOfRepo) {
-        filteredRepos.addAll(_alreadyCachedRepositories);
-        _alreadyCachedRepositories = [];
-      } else {
-        filteredRepos.addAll(_alreadyCachedRepositories.sublist(0, desiredAmountOfRepo));
-        _alreadyCachedRepositories = _alreadyCachedRepositories.sublist(desiredAmountOfRepo);
-        return filteredRepos;
-      }
+      int itemsToAdd = _alreadyCachedRepositories.length < desiredAmountOfRepo
+        ? _alreadyCachedRepositories.length
+        : desiredAmountOfRepo;
+
+      filteredRepos.addAll(_alreadyCachedRepositories.sublist(0, itemsToAdd));
+      _alreadyCachedRepositories = _alreadyCachedRepositories.sublist(itemsToAdd);
+
+      if (filteredRepos.length == desiredAmountOfRepo) return filteredRepos;
     }
 
     try {
       late http.Response response;
-      bool shouldStop = false;
 
-      do {
-        // final uri = Uri.parse('$_baseUrl/user/repos?per_page=$perPage&page=$requiredPage');
+       while(filteredRepos.length != desiredAmountOfRepo) {
+
         final uri = Uri.parse('$_baseUrl/user/repos?per_page=$reposPerPage&page=$_currentRepoPage');
         response = await http.get(
           uri,
@@ -300,18 +342,14 @@ class GithubApi {
             'Accept' : 'application/vnd.github+json'
           }
         );
-        _currentRepoPage++;
 
         if (response.statusCode == 200) {
+          _currentRepoPage++;
+
           List<dynamic> unfilteredRepos = jsonDecode(response.body);
-          bool desiredAmountReached = false;
 
           for (int i = 0; i < unfilteredRepos.length; i++) {
             Map<String, dynamic> repoAsJson = unfilteredRepos[i];
-
-            if (filteredRepos.length == desiredAmountOfRepo) {
-              desiredAmountReached = true;
-            }
 
             if (repoAsJson['permissions']['admin'] == true) {
 
@@ -321,52 +359,43 @@ class GithubApi {
                 isPrivate: repoAsJson['private']
               );
 
-              if (desiredAmountReached) {
+              if (filteredRepos.length < desiredAmountOfRepo) {
+                filteredRepos.add(repository);
+              } else {
                 // Desired amount is reached, but some repos are left in current page
                 // that are eligibile but couldn't be fetched. To add them in subsequenet
-                // calls, they are cached now.
+                // calls, they are cached.
                 _alreadyCachedRepositories.add(repository);
-              } else {
-                filteredRepos.add(repository);
               }
             }
           }
 
-          // If less repositories were fetched but reposPerPage was more, then it
-          // is considered last page, hence the fetching should stop by now even if
-          // fetching is not completed
-          if (unfilteredRepos.length < reposPerPage) {
-            shouldStop = true;
-          }
-        } else if (response.statusCode == 401) {
-          AppNotifier.notifyUserAboutError(errorMessage: 'Please provide valid credentials! Current ones are invalid!');
-          shouldStop = true;
-        } else if (response.statusCode == 403) {
-          AppNotifier.notifyUserAboutError(
-            errorMessage: "Either github api rate limit exceeded or your token doesn't have required permissions"
-          );
-          shouldStop = true;
-          
-        } else {
-          AppNotifier.showErrorDialog(
-            errorMessage: 'Unknown error occured while trying to get repositories.\nResponse Status Code: ${response.statusCode}'
-          );
-          shouldStop = true;
-        }        
-      } while(filteredRepos.length != desiredAmountOfRepo && !shouldStop);
+          if (unfilteredRepos.length < reposPerPage) break;
 
-      if (response.statusCode == 200) {
-        return filteredRepos;
-      } else {
-        // As error occured, it means that current page must be the last page.
-        _currentRepoPage--;
+        } else{
+          // Handle other response codes
+          if (response.statusCode == 401) {
+            AppNotifier.notifyUserAboutError(errorMessage: 'Please provide valid credentials! Current ones are invalid!');
+          } else if (response.statusCode == 403) {
+            AppNotifier.notifyUserAboutError(
+              errorMessage: "Either github api rate limit exceeded or your token doesn't have required permissions"
+            );
+          } else {
+            AppNotifier.showErrorDialog(
+              errorMessage: 'Unknown error occured while trying to get repositories.\nResponse Status Code: ${response.statusCode}'
+            );
+          }
+          return null;
+        } 
       }
+      
+      return filteredRepos;
     } on SocketException {
       AppNotifier.notifyUserAboutInfo(info: 'Please check your internet!');
     } catch (e) {
       AppNotifier.showErrorDialog(errorMessage: 'Unexpected error occured: ${e.toString()}');
     }
-    
+
     return null;
   }
 }
