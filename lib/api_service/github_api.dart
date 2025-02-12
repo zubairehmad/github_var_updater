@@ -252,44 +252,6 @@ class GithubApi {
     }
   }
 
-  /// Deletes the given secret of given repository
-  /// 
-  /// Returns status code of the request:
-  /// 204: Successful
-  static Future<int> deleteSecret({
-    required String secretName,
-    required GithubRepository secretRepo,
-  }) async {
-    if (_user == null) {
-      AppNotifier.showErrorDialog(errorMessage: 'Please login first!');
-      return 0;
-    }
-
-    late final http.Response response;
-
-    try {
-      Uri uri = Uri.parse('$_baseUrl/repos/${_user!.username}/${secretRepo.name}/actions/secrets/$secretName');
-      response = await http.delete(
-        uri,
-        headers: {
-          'Authorization' : 'Bearer ${_user!.accessToken}',
-          'Accept' : 'application/vnd.github+json'
-        }
-      );
-
-      if (response.statusCode == 204) {
-        AppNotifier.notifyUserAboutSuccess(successMessage: 'Secret deleted successfully!');
-      }
-
-    } on SocketException {
-      AppNotifier.notifyUserAboutInfo(info: 'Please check your internet connection!');
-    } catch (e) {
-      AppNotifier.showErrorDialog(errorMessage: 'Unexpected error occured: ${e.toString()}');
-    }
-
-    return response.statusCode;
-  }
-
   static int _currentRepoPage = 1;
   static List<GithubRepository> _alreadyCachedRepositories = [];
 
