@@ -58,13 +58,15 @@ class GoogleUtils {
 
   static Future<OAuth2Token?> getOuth2Token() async {
 
-    if (clientId == 'ERROR' || clientSecret == 'ERROR') {
-      AppNotifier.showErrorDialog(errorMessage: "Client Id or Secret couldn't be loaded, hence can't proceed furhter!");
+    if (clientId == 'ERROR' || clientSecret == 'ERROR' || redirectUri == 'ERROR') {
+      AppNotifier.showErrorDialog(errorMessage: "Client id or secret or redirect url couldn't be loaded, hence cannot proceed furhter!");
       return null;
     }
 
     try {
       if (_googleSignIn.currentUser != null) {
+        // Ensure refresh_token is included in every response
+        await _googleSignIn.disconnect();
         await _googleSignIn.signOut();
       }
 

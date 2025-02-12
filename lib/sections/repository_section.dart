@@ -112,8 +112,6 @@ class _RepositorySectionState extends State<RepositorySection> {
           secretRepo: repo,
           newValue: newValue
         );
-
-        AppNotifier.notifyUserAboutSuccess(successMessage: 'Secret updated successfully!');
       } else {
         AppNotifier.notifyUserAboutError(errorMessage: 'Failed to update secret!');
       }
