@@ -5,8 +5,12 @@ import 'package:github_var_updater/utils/app_notifier.dart';
 /// which is selected when google sign in dialog is shown
 class GoogleUtils {
 
-  static final GoogleSignIn _googleSignIn = GoogleSignIn();
-
+  static final GoogleSignIn _googleSignIn = GoogleSignIn(
+    scopes: [
+      'https://www.googleapis.com/auth/youtube.upload'  // For uploading a youtube video
+    ]
+  );
+  
   static Future<String?> getAccessTokenForGoogleAccount() async {
     try {
 
@@ -16,6 +20,7 @@ class GoogleUtils {
       }
 
       GoogleSignInAccount? account = await _googleSignIn.signIn();
+
       if (account != null) {
         return (await account.authentication).accessToken;
       }

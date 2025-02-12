@@ -16,38 +16,37 @@ class RepositorySection extends StatefulWidget {
 class _RepositorySectionState extends State<RepositorySection> {
 
   List<GithubRepository>? repositories;
-  bool repoBeingFetched = false;
-  int currentPage=1;
-  static const repoPerPage = 10;
 
-  Future<void> _getRepositories() async {
+  // Some flags to update UI
+  bool repoBeingFetched = false;
+  bool moreReposAreLoading = false;
+  bool moreReposAvailable = true;
+
+  /// For loading repositories for first time
+  Future<void> _loadRepositories() async {
+    if (repoBeingFetched == true || !moreReposAvailable) return;
+
     // Will start displaying circular progress indicator
     setState(() => repoBeingFetched = true);
-    repositories = await GithubApi.getUserRepos(
-      requiredPage: currentPage,
-      perPage: repoPerPage,
-    );
+    repositories = await GithubApi.getUserRepos(startFromFirstPage: true);
     // Will stop displaying circular progress indicator
     setState(() => repoBeingFetched = false);
   }
 
-  void nextPage() {
-    setState(() {
-      currentPage++;
-      // So that progress indicator can be shown
-      repositories = null;
-    });
-    // Set state will be called in this repo
-    _getRepositories();
-  }
+  /// For loading repositories after first time i.e by load more button
+  Future<void> _loadMoreRepositories() async {
+    if (moreReposAreLoading == true || !moreReposAvailable) return;
 
-  void previousPage() {
-    setState(() {
-      currentPage--;
-      // So that progress indicator can be shown
-      repositories = null;
-    });
-    _getRepositories();
+    setState(() => moreReposAreLoading = true);
+    List<GithubRepository>? fetchedRepositories = await GithubApi.getUserRepos();
+    if (fetchedRepositories != null) {
+      if (fetchedRepositories.isEmpty) {
+        moreReposAvailable = false;
+      } else {
+        repositories!.addAll(fetchedRepositories);
+      }
+    }
+    setState(() => moreReposAreLoading = false);
   }
 
   Future<void> showRepositorySecrets(int repoIndex) async {
@@ -58,31 +57,31 @@ class _RepositorySectionState extends State<RepositorySection> {
     GithubRepository repo = repositories![repoIndex];
     List<RepositorySecret> secrets = [];
     bool isFetching = false;
-    bool hasMoreSecrets = true;
-    int reqPage = 1;
-    const int perPage = 10;
+    bool moreSecretsAvailable = true;
 
     Future<void> fetchSecrets({required void Function(void Function()) setState}) async {
-      if (isFetching || !hasMoreSecrets) return;
+      if (isFetching || !moreSecretsAvailable) return;
 
       setState(() => isFetching = true);
 
       List<RepositorySecret>? newSecrets = await GithubApi.getRepoSecrets(
         repoName: repo.name,
-        requiredPage: reqPage,
-        perPage: perPage,
+        startFromFirstPage: secrets.isEmpty,
       );
 
-      if (newSecrets == null || newSecrets.isEmpty) {
-        setState(() => hasMoreSecrets = false);
-      } else {
-        setState(() {
-          secrets.addAll(newSecrets);
-          reqPage++;
-        });
-      }
+      if (mounted) {
+        if (newSecrets != null) {
+          if (newSecrets.isEmpty) {
+            setState(() => moreSecretsAvailable = false);
+          } else {
+            setState(() {
+              secrets.addAll(newSecrets);
+            });
+          }
+        }
 
-      setState(() => isFetching = false);
+        setState(() => isFetching = false);
+      }
     }
 
     Future<void> deleteSecret({required void Function() onDelete, required String secretName}) async {
@@ -112,7 +111,7 @@ class _RepositorySectionState extends State<RepositorySection> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setState) {
-            if (secrets.isEmpty && hasMoreSecrets) {
+            if (secrets.isEmpty && moreSecretsAvailable) {
               fetchSecrets(setState: setState);
             }
 
@@ -148,21 +147,40 @@ class _RepositorySectionState extends State<RepositorySection> {
                               itemCount: secrets.length + 1,
                               itemBuilder: (context, index) {
                                 if (index == secrets.length) {
-                                  return hasMoreSecrets
-                                      ? Center(
-                                          child: TextButton(
-                                            onPressed: () {
-                                              fetchSecrets(setState: setState);
-                                            },
-                                            child: const Text(
-                                              "Load More",
-                                              style: TextStyle(
-                                                color: Color(0xFF3B71CA),
-                                              ),
-                                            ),
+                                  late Widget widget;
+
+                                  if (moreSecretsAvailable) {
+                                    if (isFetching) {
+                                      widget = const Center(
+                                        child: SizedBox(
+                                          height: 20,
+                                          width: 20,
+                                          child: CircularProgressIndicator(
+                                            color: Color(0xFF3B71CA),
+                                            strokeWidth: 3,
                                           ),
                                         )
-                                      : const Center(child: Text("No More Secrets"));
+                                      );
+                                    } else {
+                                      widget = Center(
+                                        child: TextButton(
+                                          onPressed: () {
+                                            fetchSecrets(setState: setState);
+                                          },
+                                          child: const Text(
+                                            "Load More",
+                                            style: TextStyle(
+                                              color: Color(0xFF3B71CA),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    widget = const Center(child: Text("No More Secrets"));
+                                  }
+
+                                  return widget;
                                 }
 
                                 RepositorySecret secret = secrets[index];
@@ -209,7 +227,7 @@ class _RepositorySectionState extends State<RepositorySection> {
   @override
   void initState() {
     super.initState();
-    _getRepositories();
+    _loadRepositories();
   }
 
   @override
@@ -219,11 +237,30 @@ class _RepositorySectionState extends State<RepositorySection> {
     if (repoBeingFetched == true) {
       // Show circular progress indicator while
       // repositories are being fetched
-      body = const Center(
-        child: CircularProgressIndicator(
-          color: Colors.blue,
-        ),
-      );      
+      body = const Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Card(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Text(
+                  "Loading Repositories...",
+                  style: TextStyle(
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(height: 35),
+          CircularProgressIndicator(
+            color: Colors.blue,
+          ),
+        ]
+      ); 
     } else if (GithubApi.currentUser == null) {
       body = const Center(
         child: Padding(
@@ -247,7 +284,7 @@ class _RepositorySectionState extends State<RepositorySection> {
                 child: Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Text(
-                    'No repositories could be found!',
+                    'No repositories could be fetched!',
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.bold
@@ -258,12 +295,7 @@ class _RepositorySectionState extends State<RepositorySection> {
             ),
             const SizedBox(height: 40),
             StyledTextButton(
-              onPressed: () {
-                setState(() {
-                  repositories = null;
-                });
-                _getRepositories();
-              },
+              onPressed: _loadRepositories,
               text: Text(
                 'Try Again'
               ),
@@ -280,7 +312,7 @@ class _RepositorySectionState extends State<RepositorySection> {
               child: Padding(
                 padding: EdgeInsets.only(left: 10.0),
                 child: Text(
-                  'All Repositories',
+                  'Your Repositories',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -295,7 +327,7 @@ class _RepositorySectionState extends State<RepositorySection> {
                   child: Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     child: Text(
-                      "That's it! You've seen all!",
+                      "It seems that there aren't any repositories!",
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.bold
@@ -321,39 +353,34 @@ class _RepositorySectionState extends State<RepositorySection> {
                     subtitle: Text('${repositories![i].isPrivate? "Private" : "Public"} Repository'),
                   ),
                 ),
-                if (i != repositories!.length-1) ...[
-                  const Divider(thickness: 1)
+                const Divider(thickness: 1),
+                if (i == repositories!.length-1) ...[
+                  const SizedBox(height: 15),
+                  if (moreReposAreLoading) ...[
+                    const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF3B71CA),
+                          strokeWidth: 3,
+                        )
+                      )
+                  ] else if (moreReposAvailable) ...[
+                    TextButton(
+                        onPressed: _loadMoreRepositories,
+                        child: const Text(
+                          'Load More',
+                          style: TextStyle(
+                            color: Color(0xFF3B71CA)
+                          ),
+                        ),
+                      )
+                  ] else ...[
+                    Text('No more repositories!')
+                  ]
                 ]
               ],
-            ],
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (currentPage != 1) ...[
-                  IconButton(
-                    onPressed: previousPage,
-                    icon: const Icon(Icons.chevron_left, size: 28),
-                  ),
-                ],
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    "Page $currentPage",
-                    style: const TextStyle( 
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                if (repositories!.length == repoPerPage) ...[
-                  IconButton(
-                    onPressed: nextPage,
-                    icon: Icon(Icons.chevron_right, size: 28),
-                  ),
-                ],
-              ],
-            ),
+            ]
           ],
         ),
       );

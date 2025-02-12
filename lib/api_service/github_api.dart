@@ -33,13 +33,11 @@ class GithubRepository {
   final String name;
   final String fullName;
   final bool isPrivate;
-  final RepositoryRelationType relationType;
 
   const GithubRepository({
     required this.name,
     required this.fullName,
     required this.isPrivate,
-    required this.relationType,
   });
 }
 
@@ -76,14 +74,29 @@ class GithubApi {
     }
   }
 
-  /// Returns list of all the secrets of given repository of current user.
+  static int _currentSecretPage = 1;
+  static List<RepositorySecret> _alreadyCachedSecrets = [];
+
+  /// Returns list of [desiredAmount] (atmost) of secrets for given [repoName].
+  /// Starts fetching from first page if [startFromFirstPage] is set to true.
   /// 
-  /// Returns [null] if any problem occurs
+  /// It handles pagination internally.
+  /// 
+  /// Returns null if any problem occurs, and empty list when all the secrets
+  /// are returned
   static Future<List<RepositorySecret>?> getRepoSecrets({
     required String repoName,
-    int requiredPage = 1,
-    int perPage = 10
+    int desiredAmount = 10,
+    bool startFromFirstPage = false,
   }) async {
+    const perPage = 30;
+    List<RepositorySecret> secrets = [];
+
+    if (startFromFirstPage) {
+      _currentSecretPage = 1;
+      _alreadyCachedSecrets = [];
+    }
+
     if (_user == null) {
       AppNotifier.showErrorDialog(
         errorMessage: 'User is not authenticated! Cannot get secrets!'
@@ -91,32 +104,61 @@ class GithubApi {
       return null;
     }
 
+    if (_alreadyCachedSecrets.isNotEmpty) {
+      int itemsToAdd = _alreadyCachedSecrets.length < desiredAmount
+        ? _alreadyCachedSecrets.length
+        : desiredAmount;
+
+      secrets.addAll(_alreadyCachedSecrets.sublist(0, itemsToAdd));
+      _alreadyCachedSecrets = _alreadyCachedSecrets.sublist(itemsToAdd);
+    }
+
     try {
-      final uri = Uri.parse(
-        "$_baseUrl/repos/${_user!.username}/$repoName/actions/secrets?per_page=$perPage&page=$requiredPage"
-      );
-      final response = await http.get(
-        uri,
-        headers: {
-          'Authorization' : 'Bearer ${_user!.accessToken}',
-          'Accept' : 'application/vnd.github+json',
+      while (secrets.length < desiredAmount) {
+        final uri = Uri.parse(
+          "$_baseUrl/repos/${_user!.username}/$repoName/actions/secrets?per_page=$perPage&page=$_currentSecretPage"
+        );
+        final response = await http.get(
+          uri,
+          headers: {
+            'Authorization' : 'Bearer ${_user!.accessToken}',
+            'Accept' : 'application/vnd.github+json',
+          }
+        );
+
+        if (response.statusCode == 200) {
+          _currentSecretPage++;
+
+          List<dynamic> secretsAsJson = jsonDecode(response.body)['secrets'];
+
+          for (int i = 0; i < secretsAsJson.length; i++) {
+            Map<String, dynamic> secretAsJson = secretsAsJson[i];
+            RepositorySecret repositorySecret = RepositorySecret(
+              name: secretAsJson['name'],
+              createdAt: _toPrettyDate(secretAsJson['created_at']),
+              updatedAt: _toPrettyDate(secretAsJson['updated_at']),
+            );
+
+            if (secrets.length < desiredAmount) {
+              secrets.add(repositorySecret);
+            } else {
+              _alreadyCachedSecrets.add(repositorySecret);
+            }
+          }
+
+          if (secretsAsJson.length < perPage) break;
+        } else {
+          if (response.statusCode == 404) {
+            AppNotifier.notifyUserAboutError(errorMessage: "You don't seem to have permission to view secrets of required repository!");
+          } else {
+            AppNotifier.showErrorDialog(
+              errorMessage: 'Error occured while fetching secrets: ${response.statusCode} - ${response.reasonPhrase}'
+            );
+          }
+          return null;
         }
-      );
-
-      if (response.statusCode == 200) {
-        List<dynamic> secrets = jsonDecode(response.body)['secrets'];
-        List<RepositorySecret> repoSecrets = secrets.map((secretAsJson) {
-          return RepositorySecret(
-            name: secretAsJson['name'],
-            createdAt: _toPrettyDate(secretAsJson['created_at']),
-            updatedAt: _toPrettyDate(secretAsJson['updated_at']),
-          );
-        }).toList();
-
-        return repoSecrets;
-      } else if (response.statusCode == 404) {
-        AppNotifier.notifyUserAboutError(errorMessage: "You don't seem to have permission to view secrets of required repository!");
       }
+      return secrets;
     } on SocketException {
       AppNotifier.notifyUserAboutInfo(info: 'Please check your internet connection!');
     } catch (e) {
@@ -248,13 +290,27 @@ class GithubApi {
     return response.statusCode;
   }
 
-  /// Returns all repositories of current user.
+  static int _currentRepoPage = 1;
+  static List<GithubRepository> _alreadyCachedRepositories = [];
+
+  /// Returns only repositories for which the user is admin. The returned repositories
+  /// are based upon [desiredAmountOfRepo]. It can return less than that if all repositories
+  /// are returned, or if last page is encountered. [startFromFirstPage] can be set to true
+  /// to start fetching from first page.
   /// 
-  /// Returns [null] if any error occurs.
-  static Future<List<GithubRepository>?> getUserRepos({
-    int requiredPage = 1,
-    int perPage = 30
-  }) async {
+  /// It handles pagination internally.
+  /// 
+  /// Returns null if any error occurs during fetching repositories, and empty list
+  /// when all repositories are returned.
+  static Future<List<GithubRepository>?> getUserRepos({int desiredAmountOfRepo = 20, bool startFromFirstPage = false}) async {
+    const reposPerPage = 50;
+    List<GithubRepository> filteredRepos = [];
+
+    if (startFromFirstPage) {
+      _currentRepoPage = 1;
+      _alreadyCachedRepositories = [];
+    }
+    
     if (_user == null) {
       AppNotifier.showErrorDialog(
         errorMessage: "Cannot get repositories for current user! Please provide required information on github account section!"
@@ -262,62 +318,84 @@ class GithubApi {
       return null;
     }
 
+    if (_alreadyCachedRepositories.isNotEmpty) {
+      int itemsToAdd = _alreadyCachedRepositories.length < desiredAmountOfRepo
+        ? _alreadyCachedRepositories.length
+        : desiredAmountOfRepo;
+
+      filteredRepos.addAll(_alreadyCachedRepositories.sublist(0, itemsToAdd));
+      _alreadyCachedRepositories = _alreadyCachedRepositories.sublist(itemsToAdd);
+
+      if (filteredRepos.length == desiredAmountOfRepo) return filteredRepos;
+    }
+
     try {
-      final uri = Uri.parse('$_baseUrl/user/repos?per_page=$perPage&page=$requiredPage');
-      final response = await http.get(
-        uri,
-        headers: {
-          'Authorization' : 'Bearer ${_user?.accessToken}',
-          'Accept' : 'application/vnd.github+json'
-        }
-      );
+      late http.Response response;
 
-      if (response.statusCode == 200) {
-        List<dynamic> repos = jsonDecode(response.body);
+       while(filteredRepos.length != desiredAmountOfRepo) {
 
-        List<GithubRepository> repositories = repos.map((repoAsJson) {
-          RepositoryRelationType relationType;
-          String ownerLogin = repoAsJson['owner']['login'];
-          String ownerType = repoAsJson['owner']['type'];
+        final uri = Uri.parse('$_baseUrl/user/repos?per_page=$reposPerPage&page=$_currentRepoPage');
+        response = await http.get(
+          uri,
+          headers: {
+            'Authorization' : 'Bearer ${_user?.accessToken}',
+            'Accept' : 'application/vnd.github+json'
+          }
+        );
 
-          if (ownerLogin == _user!.username) {
-            relationType = RepositoryRelationType.userOwned;
-          } else if (ownerType == 'Organization') {
-            relationType = RepositoryRelationType.organizationOwned;
-          } else {
-            relationType = RepositoryRelationType.collaboratorOnly;
+        if (response.statusCode == 200) {
+          _currentRepoPage++;
+
+          List<dynamic> unfilteredRepos = jsonDecode(response.body);
+
+          for (int i = 0; i < unfilteredRepos.length; i++) {
+            Map<String, dynamic> repoAsJson = unfilteredRepos[i];
+
+            if (repoAsJson['permissions']['admin'] == true) {
+
+              GithubRepository repository = GithubRepository(
+                name: repoAsJson['name'],
+                fullName: repoAsJson['full_name'],
+                isPrivate: repoAsJson['private']
+              );
+
+              if (filteredRepos.length < desiredAmountOfRepo) {
+                filteredRepos.add(repository);
+              } else {
+                // Desired amount is reached, but some repos are left in current page
+                // that are eligibile but couldn't be fetched. To add them in subsequenet
+                // calls, they are cached.
+                _alreadyCachedRepositories.add(repository);
+              }
+            }
           }
 
-          return GithubRepository(
-            name: repoAsJson['name'],
-            fullName: repoAsJson['full_name'],
-            isPrivate: repoAsJson['private'],
-            relationType: relationType,
-          );
-        }).toList();
+          if (unfilteredRepos.length < reposPerPage) break;
 
-        repositories.sort((a, b) {
-          return a.relationType.index.compareTo(b.relationType.index);
-        });
-    
-        return repositories;
-      } else if (response.statusCode == 401) {
-        AppNotifier.notifyUserAboutError(errorMessage: 'Please provide valid credentials! Current ones are invalid!');
-      } else if (response.statusCode == 403) {
-        AppNotifier.notifyUserAboutError(
-          errorMessage: "Either github api rate limit exceeded or your token doesn't have required permissions"
-        );
-      } else {
-        AppNotifier.showErrorDialog(
-          errorMessage: 'Unknown error occured while trying to get repositories.\nResponse Status Code: ${response.statusCode}'
-        );
+        } else{
+          // Handle other response codes
+          if (response.statusCode == 401) {
+            AppNotifier.notifyUserAboutError(errorMessage: 'Please provide valid credentials! Current ones are invalid!');
+          } else if (response.statusCode == 403) {
+            AppNotifier.notifyUserAboutError(
+              errorMessage: "Either github api rate limit exceeded or your token doesn't have required permissions"
+            );
+          } else {
+            AppNotifier.showErrorDialog(
+              errorMessage: 'Unknown error occured while trying to get repositories.\nResponse Status Code: ${response.statusCode}'
+            );
+          }
+          return null;
+        } 
       }
+      
+      return filteredRepos;
     } on SocketException {
       AppNotifier.notifyUserAboutInfo(info: 'Please check your internet!');
     } catch (e) {
       AppNotifier.showErrorDialog(errorMessage: 'Unexpected error occured: ${e.toString()}');
     }
-    
+
     return null;
   }
 }
