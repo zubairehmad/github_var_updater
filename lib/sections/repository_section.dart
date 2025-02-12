@@ -24,6 +24,8 @@ class _RepositorySectionState extends State<RepositorySection> {
 
   /// For loading repositories for first time
   Future<void> _loadRepositories() async {
+    if (repoBeingFetched == true || !moreReposAvailable) return;
+
     // Will start displaying circular progress indicator
     setState(() => repoBeingFetched = true);
     repositories = await GithubApi.getUserRepos(startFromFirstPage: true);
@@ -33,13 +35,16 @@ class _RepositorySectionState extends State<RepositorySection> {
 
   /// For loading repositories after first time i.e by load more button
   Future<void> _loadMoreRepositories() async {
+    if (moreReposAreLoading == true || !moreReposAvailable) return;
+
     setState(() => moreReposAreLoading = true);
     List<GithubRepository>? fetchedRepositories = await GithubApi.getUserRepos();
     if (fetchedRepositories != null) {
       if (fetchedRepositories.isEmpty) {
         moreReposAvailable = false;
+      } else {
+        repositories!.addAll(fetchedRepositories);
       }
-      repositories!.addAll(fetchedRepositories);
     }
     setState(() => moreReposAreLoading = false);
   }
@@ -52,29 +57,27 @@ class _RepositorySectionState extends State<RepositorySection> {
     GithubRepository repo = repositories![repoIndex];
     List<RepositorySecret> secrets = [];
     bool isFetching = false;
-    bool hasMoreSecrets = true;
-    int reqPage = 1;
-    const int perPage = 10;
+    bool moreSecretsAvailable = true;
 
     Future<void> fetchSecrets({required void Function(void Function()) setState}) async {
-      if (isFetching || !hasMoreSecrets) return;
+      if (isFetching || !moreSecretsAvailable) return;
 
       setState(() => isFetching = true);
 
       List<RepositorySecret>? newSecrets = await GithubApi.getRepoSecrets(
         repoName: repo.name,
-        requiredPage: reqPage,
-        perPage: perPage,
+        startFromFirstPage: secrets.isEmpty,
       );
 
       if (mounted) {
-        if ((newSecrets == null || newSecrets.isEmpty)) {
-          setState(() => hasMoreSecrets = false);
-        } else {
-          setState(() {
-            secrets.addAll(newSecrets);
-            reqPage++;
-          });
+        if (newSecrets != null) {
+          if (newSecrets.isEmpty) {
+            setState(() => moreSecretsAvailable = false);
+          } else {
+            setState(() {
+              secrets.addAll(newSecrets);
+            });
+          }
         }
 
         setState(() => isFetching = false);
@@ -108,7 +111,7 @@ class _RepositorySectionState extends State<RepositorySection> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setState) {
-            if (secrets.isEmpty && hasMoreSecrets) {
+            if (secrets.isEmpty && moreSecretsAvailable) {
               fetchSecrets(setState: setState);
             }
 
@@ -144,21 +147,40 @@ class _RepositorySectionState extends State<RepositorySection> {
                               itemCount: secrets.length + 1,
                               itemBuilder: (context, index) {
                                 if (index == secrets.length) {
-                                  return hasMoreSecrets
-                                      ? Center(
-                                          child: TextButton(
-                                            onPressed: () {
-                                              fetchSecrets(setState: setState);
-                                            },
-                                            child: const Text(
-                                              "Load More",
-                                              style: TextStyle(
-                                                color: Color(0xFF3B71CA),
-                                              ),
-                                            ),
+                                  late Widget widget;
+
+                                  if (moreSecretsAvailable) {
+                                    if (isFetching) {
+                                      widget = const Center(
+                                        child: SizedBox(
+                                          height: 20,
+                                          width: 20,
+                                          child: CircularProgressIndicator(
+                                            color: Color(0xFF3B71CA),
+                                            strokeWidth: 3,
                                           ),
                                         )
-                                      : const Center(child: Text("No More Secrets"));
+                                      );
+                                    } else {
+                                      widget = Center(
+                                        child: TextButton(
+                                          onPressed: () {
+                                            fetchSecrets(setState: setState);
+                                          },
+                                          child: const Text(
+                                            "Load More",
+                                            style: TextStyle(
+                                              color: Color(0xFF3B71CA),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  } else {
+                                    widget = const Center(child: Text("No More Secrets"));
+                                  }
+
+                                  return widget;
                                 }
 
                                 RepositorySecret secret = secrets[index];
@@ -339,7 +361,8 @@ class _RepositorySectionState extends State<RepositorySection> {
                         width: 15,
                         height: 15,
                         child: CircularProgressIndicator(
-                          color: Color(0xFF3B71CA)
+                          color: Color(0xFF3B71CA),
+                          strokeWidth: 3,
                         )
                       )
                   ] else if (moreReposAvailable) ...[
