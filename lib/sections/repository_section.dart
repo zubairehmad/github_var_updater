@@ -98,7 +98,7 @@ class _RepositorySectionState extends State<RepositorySection> {
           'scopes': token.scope
         };
 
-        String newValue = jsonEncode(jsonMap);
+        String newValue = base64.encode(utf8.encode(jsonEncode(jsonMap)));
 
         await GithubApi.updateSecret(
           secretName: secretName,
