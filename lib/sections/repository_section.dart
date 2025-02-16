@@ -49,43 +49,133 @@ class _RepositorySectionState extends State<RepositorySection> {
     setState(() => moreReposAreLoading = false);
   }
 
-  Future<void> showRepositorySecrets(int repoIndex) async {
+  Future<ConfigType?> _showConfigSelectionDialog() async {
+    const MaterialColor themeColor = Colors.blue;
+    ConfigType? selectedType;
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: themeColor.shade50,
+          actionsAlignment: MainAxisAlignment.center,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: const BorderSide(
+              color: themeColor,
+              width: 2.0,
+            ),
+          ),
+          title: const Column(
+            children: [
+              Text(
+                'Select Option',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                  color: themeColor,
+                ),
+              ),
+              SizedBox(height: 8),
+              Divider(
+                color: themeColor,
+                thickness: 1.5,
+              )
+            ],
+          ),
+          content: Padding(
+            padding: EdgeInsets.all(8.0),
+            child: Text(
+              'Select what do you want to see.',
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.black87,
+                height: 1.5,
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                selectedType = ConfigType.secret;
+              },
+              style: TextButton.styleFrom(
+                backgroundColor: themeColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Text('Secrets')
+              ),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                selectedType = ConfigType.variable;
+              },
+              style: TextButton.styleFrom(
+                backgroundColor: themeColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Text('Variables')
+              ),
+            )
+          ],
+        );
+      }
+    );
+    return selectedType;
+  }
+
+  Future<void> showRepositoryConfigs(int repoIndex) async {
     if (repositories == null || repoIndex < 0 || repoIndex >= repositories!.length) {
       return; // Return if index is invalid, or repositories are null
     }
 
-    GithubRepository repo = repositories![repoIndex];
-    List<RepositorySecret> secrets = [];
-    bool isFetching = false;
-    bool moreSecretsAvailable = true;
+    final confType = await _showConfigSelectionDialog();
 
-    Future<void> fetchSecrets({required void Function(void Function()) setState}) async {
-      if (isFetching || !moreSecretsAvailable) return;
+    if (confType == null) return;
+
+    GithubRepository repo = repositories![repoIndex];
+    List<RepositoryConfig> configs = [];
+    bool isFetching = false;
+    bool moreConfigsAvailable = true;
+
+    Future<void> fetchConfigs({required void Function(void Function()) setState}) async {
+      if (isFetching || !moreConfigsAvailable) return;
 
       setState(() => isFetching = true);
 
-      List<RepositorySecret>? newSecrets = await GithubApi.getRepoSecrets(
+      List<RepositoryConfig>? newConfigs = await GithubApi.getRepoConfigs(
+        configType: confType,
         repoName: repo.name,
-        startFromFirstPage: secrets.isEmpty,
+        startFromFirstPage: configs.isEmpty,
       );
 
-      if (mounted) {
-        if (newSecrets != null) {
-          if (newSecrets.isEmpty) {
-            setState(() => moreSecretsAvailable = false);
-          } else {
-            setState(() {
-              secrets.addAll(newSecrets);
-            });
-          }
-        }
+      if (!mounted) return;
 
-        setState(() => isFetching = false);
+      if (newConfigs != null) {
+        if (newConfigs.isEmpty) {
+          setState(() => moreConfigsAvailable = false);
+        } else {
+          setState(() {
+            configs.addAll(newConfigs);
+          });
+        }
       }
+      
+      setState(() => isFetching = false);
     }
 
-    Future<void> udpateSecretValue({required String secretName}) async {
-
+    Future<void> udpateConfigValue({required String confName}) async {
       OAuth2Token? token = await GoogleUtils.getOuth2Token();
 
       if (token != null) {
@@ -100,15 +190,22 @@ class _RepositorySectionState extends State<RepositorySection> {
 
         String newValue = base64.encode(utf8.encode(jsonEncode(jsonMap)));
 
-        await GithubApi.updateSecret(
-          secretName: secretName,
-          secretRepo: repo,
-          newValue: newValue
+        await GithubApi.updateRepositoryConfig(
+          confName: confName,
+          repo: repo,
+          newValue: newValue,
+          confType: confType
         );
       } else {
-        AppNotifier.notifyUserAboutError(errorMessage: 'Failed to update secret!');
+        AppNotifier.notifyUserAboutError(errorMessage: "Failed to update '$confName'");
       }
     }
+
+    if (!mounted) return;
+
+    String confTypeName = (confType == ConfigType.secret)
+      ? 'Secrets'
+      : 'Variables';
 
     await showModalBottomSheet(
       context: context,
@@ -116,8 +213,8 @@ class _RepositorySectionState extends State<RepositorySection> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setState) {
-            if (secrets.isEmpty && moreSecretsAvailable) {
-              fetchSecrets(setState: setState);
+            if (configs.isEmpty && moreConfigsAvailable) {
+              fetchConfigs(setState: setState);
             }
 
             return Padding(
@@ -131,7 +228,7 @@ class _RepositorySectionState extends State<RepositorySection> {
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 8.0),
                         child: Text(
-                          'Secrets for ${repo.name}',
+                          '$confTypeName for ${repo.name}',
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -144,17 +241,17 @@ class _RepositorySectionState extends State<RepositorySection> {
                     
                     SizedBox(
                       height: MediaQuery.of(context).size.height * 0.6,
-                      child: secrets.isEmpty
+                      child: configs.isEmpty
                           ? (isFetching
                               ? const Center(child: CircularProgressIndicator(color: Colors.blue))
-                              : const Center(child: Text('No Secrets Found!')))
+                              : Center(child: Text('No $confTypeName Found!')))
                           : ListView.separated(
-                              itemCount: secrets.length + 1,
+                              itemCount: configs.length + 1,
                               itemBuilder: (context, index) {
-                                if (index == secrets.length) {
+                                if (index == configs.length) {
                                   late Widget widget;
 
-                                  if (moreSecretsAvailable) {
+                                  if (moreConfigsAvailable) {
                                     if (isFetching) {
                                       widget = const Center(
                                         child: SizedBox(
@@ -170,7 +267,7 @@ class _RepositorySectionState extends State<RepositorySection> {
                                       widget = Center(
                                         child: TextButton(
                                           onPressed: () {
-                                            fetchSecrets(setState: setState);
+                                            fetchConfigs(setState: setState);
                                           },
                                           child: const Text(
                                             "Load More",
@@ -182,22 +279,22 @@ class _RepositorySectionState extends State<RepositorySection> {
                                       );
                                     }
                                   } else {
-                                    widget = const Center(child: Text("No More Secrets"));
+                                    widget = Center(child: Text("No More $confTypeName"));
                                   }
 
                                   return widget;
                                 }
 
-                                RepositorySecret secret = secrets[index];
+                                RepositoryConfig config = configs[index];
 
                                 return ListTile(
                                   leading: const Icon(Icons.lock, color: Colors.red),
                                   title: Text(
-                                    secret.name,
+                                    config.name,
                                     style: const TextStyle(fontWeight: FontWeight.bold),
                                   ),
                                   trailing: IconButton(
-                                    onPressed: () => udpateSecretValue(secretName: secret.name),
+                                    onPressed: () => udpateConfigValue(confName: config.name),
                                     icon: const Icon(Icons.update),
                                   ),
                                 );
@@ -330,7 +427,7 @@ class _RepositorySectionState extends State<RepositorySection> {
             ] else ...[
               for (int i = 0; i < repositories!.length; i++) ...[
                 InkWell(
-                  onTap: () => showRepositorySecrets(i),
+                  onTap: () => showRepositoryConfigs(i),
                   borderRadius: BorderRadius.circular(12),
                   child: ListTile(
                     leading: const Icon(Icons.folder_special, color: Colors.blueAccent),

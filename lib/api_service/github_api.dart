@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:intl/intl.dart';
@@ -14,12 +15,25 @@ class GithubUser {
   const GithubUser({required this.username, required this.accessToken});
 }
 
-class RepositorySecret {
+/// Represents total type of configurations for a repository
+enum ConfigType {
+  secret, /// Configuration is secret, i.e it is repository secret
+  variable /// Configuration is not secret (visible), i.e it is repository variable
+}
+
+/// It represents a configuration for repo (can be a secret or variable)
+class RepositoryConfig {
   final String name;
   final String createdAt;
   final String updatedAt;
+  final ConfigType configType;
 
-  const RepositorySecret({required this.name, required this.createdAt, required this.updatedAt});
+  const RepositoryConfig({
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.configType
+  });
 }
 
 enum RepositoryRelationType {
@@ -74,27 +88,32 @@ class GithubApi {
     }
   }
 
-  static int _currentSecretPage = 1;
-  static List<RepositorySecret> _alreadyCachedSecrets = [];
+  static int _currentConfigPage = 1;
+  static List<RepositoryConfig> _alreadyCachedConfigs = [];
 
-  /// Returns list of [desiredAmount] (atmost) of secrets for given [repoName].
-  /// Starts fetching from first page if [startFromFirstPage] is set to true.
+  /// Returns list of [desiredAmount] of configurations of required [configType] for given
+  /// [repoName]. Starts fetching from first page if [startFromFirstPage] is set to true. For
+  /// last page, the amount of configs can be lower than [desiredAmount] of configurations.
   /// 
   /// It handles pagination internally.
   /// 
-  /// Returns null if any problem occurs, and empty list when all the secrets
-  /// are returned
-  static Future<List<RepositorySecret>?> getRepoSecrets({
+  /// Returns null if any problem occurs, and empty list when all the configurations are returned
+  /// 
+  /// It must be noted that during calling this method, it must be noted that it doesn't separately
+  /// store pages when called for different configs. So it must be ensured by caller that whenever config
+  /// type potentially changes, this method should be called with startFromFirstPage=true once.
+  static Future<List<RepositoryConfig>?> getRepoConfigs({
     required String repoName,
+    required ConfigType configType,
     int desiredAmount = 10,
     bool startFromFirstPage = false,
   }) async {
     const perPage = 30;
-    List<RepositorySecret> secrets = [];
+    List<RepositoryConfig> configs = [];
 
     if (startFromFirstPage) {
-      _currentSecretPage = 1;
-      _alreadyCachedSecrets = [];
+      _currentConfigPage = 1;
+      _alreadyCachedConfigs = [];
     }
 
     if (_user == null) {
@@ -104,19 +123,25 @@ class GithubApi {
       return null;
     }
 
-    if (_alreadyCachedSecrets.isNotEmpty) {
-      int itemsToAdd = _alreadyCachedSecrets.length < desiredAmount
-        ? _alreadyCachedSecrets.length
+    if (_alreadyCachedConfigs.isNotEmpty) {
+      int itemsToAdd = _alreadyCachedConfigs.length < desiredAmount
+        ? _alreadyCachedConfigs.length
         : desiredAmount;
 
-      secrets.addAll(_alreadyCachedSecrets.sublist(0, itemsToAdd));
-      _alreadyCachedSecrets = _alreadyCachedSecrets.sublist(itemsToAdd);
+      configs.addAll(_alreadyCachedConfigs.sublist(0, itemsToAdd));
+      _alreadyCachedConfigs = _alreadyCachedConfigs.sublist(itemsToAdd);
     }
 
     try {
-      while (secrets.length < desiredAmount) {
+      while (configs.length < desiredAmount) {
+
+        String apiEndpoint = "$_baseUrl/repos/${_user!.username}/$repoName/actions/";
+        apiEndpoint += configType == ConfigType.secret ? 'secrets' : 'variables';
+        apiEndpoint += "?per_page=$perPage&page=$_currentConfigPage";
+
         final uri = Uri.parse(
-          "$_baseUrl/repos/${_user!.username}/$repoName/actions/secrets?per_page=$perPage&page=$_currentSecretPage"
+          // "$_baseUrl/repos/${_user!.username}/$repoName/actions/secrets?per_page=$perPage&page=$_currentConfigPage"
+          apiEndpoint
         );
         final response = await http.get(
           uri,
@@ -127,29 +152,34 @@ class GithubApi {
         );
 
         if (response.statusCode == 200) {
-          _currentSecretPage++;
+          _currentConfigPage++;
 
-          List<dynamic> secretsAsJson = jsonDecode(response.body)['secrets'];
+          List<dynamic> configsAsJson = (configType == ConfigType.secret)
+            ? jsonDecode(response.body)['secrets']
+            : jsonDecode(response.body)['variables'];
 
-          for (int i = 0; i < secretsAsJson.length; i++) {
-            Map<String, dynamic> secretAsJson = secretsAsJson[i];
-            RepositorySecret repositorySecret = RepositorySecret(
-              name: secretAsJson['name'],
-              createdAt: _toPrettyDate(secretAsJson['created_at']),
-              updatedAt: _toPrettyDate(secretAsJson['updated_at']),
+          for (int i = 0; i < configsAsJson.length; i++) {
+            Map<String, dynamic> configAsJson = configsAsJson[i];
+            RepositoryConfig repositoryConfig = RepositoryConfig(
+              name: configAsJson['name'],
+              createdAt: _toPrettyDate(configAsJson['created_at']),
+              updatedAt: _toPrettyDate(configAsJson['updated_at']),
+              configType: configType,
             );
 
-            if (secrets.length < desiredAmount) {
-              secrets.add(repositorySecret);
+            if (configs.length < desiredAmount) {
+              configs.add(repositoryConfig);
             } else {
-              _alreadyCachedSecrets.add(repositorySecret);
+              _alreadyCachedConfigs.add(repositoryConfig);
             }
           }
 
-          if (secretsAsJson.length < perPage) break;
+          if (configsAsJson.length < perPage) break;
         } else {
           if (response.statusCode == 404) {
-            AppNotifier.notifyUserAboutError(errorMessage: "You don't seem to have permission to view secrets of required repository!");
+            AppNotifier.notifyUserAboutError(
+              errorMessage: "You don't seem to have permission to view configurations (variables/secrets) of required repository!"
+            );
           } else {
             AppNotifier.showErrorDialog(
               errorMessage: 'Error occured while fetching secrets: ${response.statusCode} - ${response.reasonPhrase}'
@@ -158,7 +188,7 @@ class GithubApi {
           return null;
         }
       }
-      return secrets;
+      return configs;
     } on SocketException {
       AppNotifier.notifyUserAboutInfo(info: 'Please check your internet connection!');
     } catch (e) {
@@ -168,35 +198,20 @@ class GithubApi {
     return null;
   }
 
-  /// Helper method, encrypts given secret value based on given public key.
-  static Future<String> _encryptSecret({required String secretValue, required String publicKey}) async {
-    final sodium = await SodiumInit.init();
-
-    final publicKeyBytes = base64Decode(publicKey);
-    final secretBytes = utf8.encode(secretValue);
-
-    final encryptedBytes = sodium.crypto.box.seal(message: secretBytes, publicKey: publicKeyBytes);
-
-    return base64Encode(encryptedBytes);
-  }
-
-  /// Updates a secret's value
-  static Future<void> updateSecret({
-    required String secretName,
-    required GithubRepository secretRepo,
-    required String newValue,
+  /// A helper method that encrypts given [secretValue] of given repository [repoName]
+  /// 
+  /// Returns a map with fields encryptedSecret representing secret and id
+  /// of public key used. Returns null if any error occurs
+  static Future<Map<String, String>?> _encryptSecretValue({
+    required String secretValue,
+    required String repoName
   }) async {
-    if (_user == null) {
-      AppNotifier.showErrorDialog(errorMessage: 'Please login first!');
-      return;
-    }
-
-    String? repoPublicKey;
-    String? repoPublicKeyId;
+    String? publicKey;
+    String? publicKeyId;
 
     // Get public key for repository
     try {
-      Uri uri = Uri.parse('$_baseUrl/repos/${_user!.username}/${secretRepo.name}/actions/secrets/public-key');
+      Uri uri = Uri.parse('$_baseUrl/repos/${_user!.username}/$repoName/actions/secrets/public-key');
       final res = await http.get(
         uri,
         headers: {
@@ -207,8 +222,8 @@ class GithubApi {
 
       if (res.statusCode == 200) {
         final responseAsJson = jsonDecode(res.body);
-        repoPublicKey = responseAsJson['key'];
-        repoPublicKeyId = responseAsJson['key_id'];
+        publicKey = responseAsJson['key'];
+        publicKeyId = responseAsJson['key_id'];
       }
     } on SocketException {
       AppNotifier.notifyUserAboutInfo(info: 'Please check your internet connection');
@@ -216,37 +231,88 @@ class GithubApi {
       AppNotifier.showErrorDialog(errorMessage: 'Unexpected error occured: ${e.toString()}');
     }
 
-    if (repoPublicKey == null || repoPublicKeyId == null) {
+    if (publicKeyId == null || publicKey == null) {
+      return null;
+    }
+
+    // Encrypt using public key
+    final sodium = await SodiumInit.init();
+
+    final publicKeyBytes = base64Decode(publicKey);
+    final secretBytes = utf8.encode(secretValue);
+
+    final encryptedBytes = sodium.crypto.box.seal(message: secretBytes, publicKey: publicKeyBytes);
+
+    // return encrypted value along with public key
+    return {
+      'encryptedSecret' : base64Encode(encryptedBytes),
+      'publicKeyId' : publicKeyId
+    };
+  }
+
+  /// Updates value of a repository configuration (secret or variable)
+  static Future<void> updateRepositoryConfig({
+    required String confName,
+    required GithubRepository repo,
+    required String newValue,
+    required ConfigType confType,
+  }) async {
+    if (_user == null) {
+      AppNotifier.showErrorDialog(errorMessage: 'Please login first!');
       return;
     }
 
-    String encryptedSecretValue = await _encryptSecret(secretValue: newValue, publicKey: repoPublicKey);
+    late String jsonBody;
+    String apiEndpoint = "$_baseUrl/repos/${_user!.username}/${repo.name}/actions/";
+
+    switch (confType) {
+      case ConfigType.secret:
+        final encryptedVal = await _encryptSecretValue(secretValue: newValue, repoName: repo.name);
+
+        if (encryptedVal == null) {
+          return;
+        }
+        
+        jsonBody = jsonEncode({
+          'encrypted_value' : encryptedVal['encryptedSecret'],
+          'key_id' : encryptedVal['publicKeyId'],
+        });
+
+        apiEndpoint += "secrets/$confName";
+        break;
+      case ConfigType.variable:
+        jsonBody = jsonEncode({
+          'value' : newValue
+        });
+
+        apiEndpoint += "variables/$confName";
+        break;
+    }
 
     try {
-      Uri url = Uri.parse('$_baseUrl/repos/${_user!.username}/${secretRepo.name}/actions/secrets/$secretName');
-      final response = await http.put(
-        url,
-        headers: {
-          'Authorization' : 'Bearer ${_user!.accessToken}',
-          'Accept' : 'application/vnd.github+json'
-        },
-        body: jsonEncode({
-          'encrypted_value' : encryptedSecretValue,
-          'key_id' : repoPublicKeyId
-        }),
-      );
+      Uri url = Uri.parse(apiEndpoint);
+      Map<String, String> headers = {
+        'Authorization' : 'Bearer ${_user!.accessToken}',
+        'Accept' : 'application/vnd.github+json',
+      };
+
+      final response = (confType == ConfigType.secret)
+        ? await http.put(url, headers: headers, body: jsonBody)
+        : await http.patch(url, headers: headers, body: jsonBody);
 
       if (response.statusCode == 201) {
-        AppNotifier.notifyUserAboutSuccess(successMessage: 'Secret created successfully!');
+        AppNotifier.notifyUserAboutSuccess(successMessage: "'$confName' created successfully!");
       } else if (response.statusCode == 204) {
-        AppNotifier.notifyUserAboutSuccess(successMessage: 'Secret updated successfully!');
+        AppNotifier.notifyUserAboutSuccess(successMessage: "'$confName' updated successfully!");
       } else if (response.statusCode == 404) {
-        AppNotifier.showErrorDialog(errorMessage: "There is no secret named '$secretName' in '${secretRepo.fullName}'");
+        AppNotifier.showErrorDialog(errorMessage: "'$confName' does not exist in'${repo.fullName}'");
       } else {
         AppNotifier.notifyUserAboutError(errorMessage: "You don't have enough permissions!");
       }
     } on SocketException {
       AppNotifier.notifyUserAboutInfo(info: 'Please check your internet connection!');
+    } on TimeoutException {
+      AppNotifier.notifyUserAboutInfo(info: 'Request timed out, your internet connect is slow');
     } catch (e) {
       AppNotifier.showErrorDialog(errorMessage: 'Unexpected error occured: ${e.toString()}');
     }
