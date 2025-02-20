@@ -1,8 +1,8 @@
 import 'dart:convert';
 
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:github_var_updater/utils/app_notifier.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:github_var_updater/utils/app_notifier.dart';
+import 'package:github_var_updater/utils/local_server.dart';
 import 'package:http/http.dart' as http;
 
 class OAuth2Token{
@@ -14,8 +14,6 @@ class OAuth2Token{
   final int expiresIn;
   /// Represents token type i.e., Bearer
   final String tokenType;
-  /// Represents jwd token
-  final String idToken;
   /// Scopes granted to access token
   final String scope;
 
@@ -24,7 +22,6 @@ class OAuth2Token{
     required this.refreshToken,
     required this.expiresIn,
     required this.tokenType,
-    required this.idToken,
     required this.scope
   });
 
@@ -34,7 +31,6 @@ class OAuth2Token{
       refreshToken: json['refresh_token'],
       expiresIn: json['expires_in'],
       tokenType: json['token_type'],
-      idToken: json['id_token'],
       scope: json['scope']
     );
   }
@@ -49,12 +45,14 @@ class GoogleUtils {
   static String clientSecret = dotenv.env['CLIENT_SECRET'] ?? 'ERROR';
   static String redirectUri = dotenv.env['REDIRECT_URI'] ?? 'ERROR';
 
-  static final GoogleSignIn _googleSignIn = GoogleSignIn(
-    scopes: [
-      'https://www.googleapis.com/auth/youtube.upload'  // For uploading a youtube video
-    ],
-    serverClientId: clientId,
-  );
+  static const List<String> scopes = [
+    'https://www.googleapis.com/auth/youtube.upload'
+  ];
+
+  static bool _hasRequiredScopes(OAuth2Token token) {
+    List<String> grantedScopes = token.scope.split(' ');
+    return scopes.every((scope) => grantedScopes.contains(scope));
+  }
 
   static Future<OAuth2Token?> getOuth2Token() async {
 
@@ -64,49 +62,66 @@ class GoogleUtils {
     }
 
     try {
-      if (_googleSignIn.currentUser != null) {
-        // Ensure refresh_token is included in every response
-        await _googleSignIn.disconnect();
-        await _googleSignIn.signOut();
+      final authUrl = Uri(
+        scheme: 'https',
+        host: 'accounts.google.com',
+        path: '/o/oauth2/auth',
+        queryParameters: {
+          'client_id' : clientId,
+          'response_type' : 'code',
+          'redirect_uri' : redirectUri,
+          'scope': scopes.join(' '),
+          'access_type': 'offline',
+          'prompt': 'consent'
+        }
+      );
+
+      await LocalServer.initiateAuthentication(authUrl);
+      bool timeoutOccured = await LocalServer.waitForAuth();
+
+      if (timeoutOccured) {
+        AppNotifier.notifyUserAboutInfo(info: 'Authentication failed because timeout occured!');
+        return null;
+      } else if (LocalServer.googleAuthCode == null) {
+        return null;
       }
 
-      GoogleSignInAccount? account = await _googleSignIn.signIn();
-
-      if (account != null) {
-        String? authCode = account.serverAuthCode;
-
-        if (authCode == null) {
-          AppNotifier.showErrorDialog(errorMessage: 'Unable to get server auth code! Cannot proceed!');
-          return null;
+      final response = await http.post(
+        Uri.parse('https://oauth2.googleapis.com/token'), // token_uri
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          'code' : LocalServer.googleAuthCode,
+          'client_id': clientId,
+          'client_secret': clientSecret,
+          'redirect_uri': redirectUri,
+          'grant_type' : 'authorization_code'
         }
+      );
 
-        final response = await http.post(
-          Uri.parse('https://oauth2.googleapis.com/token'), // token_uri
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: {
-            'code' : authCode,
-            'client_id': clientId,
-            'client_secret': clientSecret,
-            'redirect_uri': redirectUri,
-            'grant_type' : 'authorization_code'
-          }
-        );
+      if (response.statusCode == 200) {
+        OAuth2Token token = OAuth2Token.fromJson(jsonDecode(response.body));
 
-        if (response.statusCode == 200) {
-          return OAuth2Token.fromJson(jsonDecode(response.body));
+        if (_hasRequiredScopes(token)) {
+          return token;
         } else {
-          AppNotifier.showErrorDialog(
-            errorMessage: 
-                        'Error: ${response.statusCode} - ${response.reasonPhrase}'
-                        '\nResponse body: ${response.body}'
+          AppNotifier.notifyUserAboutError(
+            errorMessage: 'You have not granted app all permissions! Please try again but this time tick all checkboxes.',
+            duration: const Duration(seconds: 8),
           );
         }
+      } else {
+        AppNotifier.showErrorDialog(
+          errorMessage: 
+                      'Error: ${response.statusCode} - ${response.reasonPhrase}'
+                      '\nResponse body: ${response.body}'
+        );
       }
     } catch (e) {
       AppNotifier.showErrorDialog(errorMessage: 'Unexpected error occured : ${e.toString()}');
     }
+
     return null;
   }
 }
