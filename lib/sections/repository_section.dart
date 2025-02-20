@@ -85,16 +85,28 @@ class _RepositorySectionState extends State<RepositorySection> {
     }
 
     Future<void> udpateSecretValue({required String secretName}) async {
-      String? accessToken = await GoogleUtils.getAccessTokenForGoogleAccount();
-      if (accessToken != null) {
-        // The access token will be passed as encoded string in base64
+
+      OAuth2Token? token = await GoogleUtils.getOuth2Token();
+
+      if (token != null) {
+        Map<String, String> jsonMap = {
+          'token': token.accessToken,
+          'refresh_token': token.refreshToken,
+          'token_uri': 'https://oauth2.googleapis.com/token',
+          'client_id': GoogleUtils.clientId,
+          'client_secret': GoogleUtils.clientSecret,
+          'scopes': token.scope
+        };
+
+        String newValue = base64.encode(utf8.encode(jsonEncode(jsonMap)));
+
         await GithubApi.updateSecret(
           secretName: secretName,
           secretRepo: repo,
-          newValue: base64.encode(utf8.encode(accessToken))
+          newValue: newValue
         );
       } else {
-        AppNotifier.notifyUserAboutError(errorMessage: 'Unable to get access token for updating secret!');
+        AppNotifier.notifyUserAboutError(errorMessage: 'Failed to update secret!');
       }
     }
 
